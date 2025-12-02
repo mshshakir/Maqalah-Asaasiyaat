@@ -100,6 +100,17 @@ function startTour() {
     tourDriver.drive();
 }
 
+// Explicitly expose to window
+window.startTour = startTour;
+
+// Debug
+console.log("Tour.js loaded");
+if (!window.driver) {
+    console.error("Driver.js not found!");
+} else {
+    console.log("Driver.js found:", window.driver);
+}
+
 // Check if first time
 function checkFirstTime() {
     const seen = localStorage.getItem('maqalah_tour_seen');
