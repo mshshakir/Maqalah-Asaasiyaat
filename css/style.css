@@ -1,0 +1,54 @@
+body {
+    font-family: 'Amiri', serif;
+    background-color: #f8f9fa;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Amiri', serif;
+    font-weight: 700;
+}
+
+.rich-text-editor {
+    outline: none;
+    direction: rtl;
+    font-size: 1.1rem;
+    line-height: 1.6;
+}
+
+.highlight-missing {
+    background-color: #ffcccc;
+    color: #c0392b;
+    font-weight: bold;
+    padding: 0 2px;
+    border-radius: 2px;
+}
+
+.nav-link.active {
+    font-weight: bold;
+    border-top: 3px solid #0d6efd !important;
+}
+
+.card {
+    border-radius: 10px;
+    border: none;
+}
+
+.btn {
+    font-family: 'Amiri', serif;
+    font-weight: bold;
+}
+
+/* Structure Builder Styles */
+.fasl-card {
+    border-right: 4px solid #0d6efd;
+    background-color: #f8faff;
+}
+
+.mabhath-card {
+    border-right: 4px solid #198754;
+    background-color: #fff;
+}
+
+.matlab-item {
+    border-right: 2px solid #6c757d;
+}
