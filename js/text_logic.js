@@ -14,6 +14,26 @@ const TextLogic = {
         "الذين", "اللاتي", "اللواتي", "اللتان", "اللذان"
     ]),
 
+    // Matches a run of Arabic letters (incl. hamza forms) plus tashkeel marks,
+    // but NOT Arabic punctuation such as \u061F (U+061F) or \u060C (U+060C).
+    WORD_REGEX: /[\u0621-\u0652]+/g,
+
+    escapeHtml: function(str) {
+        if (str == null) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    },
+
+    isStopWord: function(normalizedToken) {
+        // STOP_WORDS is normalized once (see bottom of file) so membership
+        // tests against already-normalized tokens work correctly.
+        return this.STOP_WORDS_NORM.has(normalizedToken);
+    },
+
     removeTashkeel: function(text) {
         return text.replace(/[\u0617-\u061A\u064B-\u0652]/g, "");
     },
@@ -23,10 +43,11 @@ const TextLogic = {
         let t = this.removeTashkeel(text);
         
         // Unification of Alifs, Yehs, etc.
-        t = t.replace(/[أإآ]/g, "ا");
+        // Map EVERY hamza carrier to a bare alif so the same root radical is
+        // represented identically regardless of its seat: أثر (أ) and يؤثر (ؤ)
+        // must both expose the hamza as "ا". Previously ؤ→و / ئ→ي split them.
+        t = t.replace(/[أإآؤئء]/g, "ا");
         t = t.replace(/ى/g, "ي");
-        t = t.replace(/ؤ/g, "و");
-        t = t.replace(/ئ/g, "ي");
         t = t.replace(/ة/g, "ه");
         
         // Remove punctuation (keep alphanumeric and Arabic letters)
@@ -87,6 +108,43 @@ const TextLogic = {
         return stem;
     },
 
+    // Imperfective / future verb prefixes (present tense: ي/ت/ن/أ→ا, future: سـ).
+    // Used only to generate ADDITIONAL candidate roots, never to replace the
+    // original, so this can only create matches, never remove existing ones.
+    VERB_PREFIXES: ["ست", "سي", "سن", "سا", "ي", "ت", "ن"],
+
+    /**
+     * Returns the SET of candidate root keys for a normalized token.
+     * A word aligns with another if their candidate sets intersect.
+     * Candidates = the word, its al-/conjunction-stripped form, and (for long
+     * enough words) those forms with a leading verb prefix removed — each then
+     * light-stemmed. This lets أثر (noun) match يؤثر (verb) via shared root اثر.
+     */
+    rootSet: function (normToken) {
+        const out = new Set();
+        if (!normToken) return out;
+
+        const bases = new Set([normToken]);
+        const noAl = this.stripAlPrefixes(normToken);
+        if (noAl !== normToken) bases.add(noAl);
+
+        for (const b of [...bases]) {
+            for (const vp of this.VERB_PREFIXES) {
+                // Require a 3+ letter remainder so we don't shred short words.
+                if (b.startsWith(vp) && b.length > vp.length + 2) {
+                    bases.add(b.substring(vp.length));
+                    break;
+                }
+            }
+        }
+
+        for (const b of bases) {
+            const stem = this.lightStem(b);
+            if (stem) out.add(stem);
+        }
+        return out;
+    },
+
     /**
      * Highlights words in titleText that are NOT in questionText.
      * Returns { missingWords: [], highlightedHtml: "" }
@@ -103,7 +161,7 @@ const TextLogic = {
 
         // Build Question Roots
         for (const token of qTokens) {
-            if (this.STOP_WORDS.has(token)) continue;
+            if (this.isStopWord(token)) continue;
 
             // 1. Root of original
             qRoots.add(this.lightStem(token));
@@ -156,11 +214,9 @@ const TextLogic = {
         const titleRoots = new Set();
 
         for (const token of titleTokens) {
-            if (this.STOP_WORDS.has(token)) continue;
-            titleRoots.add(this.lightStem(token));
-            const stripped = this.stripAlPrefixes(token);
-            if (stripped !== token) {
-                titleRoots.add(this.lightStem(stripped));
+            if (this.isStopWord(token)) continue;
+            for (const root of this.rootSet(token)) {
+                titleRoots.add(root);
             }
         }
 
@@ -176,16 +232,15 @@ const TextLogic = {
         
         // Find all Arabic words in Question
         // We use a callback to check each word
-        html = html.replace(/([\u0600-\u06FF]+)/g, (match) => {
+        html = html.replace(this.WORD_REGEX, (match) => {
             const word = match;
             // Normalize & Stem
             const norm = this.normalizeArabic(word);
-            if (!norm || this.STOP_WORDS.has(norm)) return word;
+            if (!norm || this.isStopWord(norm)) return word;
 
-            const root1 = this.lightStem(norm);
-            const root2 = this.lightStem(this.stripAlPrefixes(norm));
+            const aligned = [...this.rootSet(norm)].some((r) => titleRoots.has(r));
 
-            if (!titleRoots.has(root1) && !titleRoots.has(root2)) {
+            if (!aligned) {
                 missingWords.push(word);
                 return `<span class="highlight-missing">${word}</span>`;
             }
@@ -195,3 +250,11 @@ const TextLogic = {
         return { missingWords, highlightedHtml: html };
     }
 };
+
+// Build a normalized copy of the stop-word list ONCE. The raw list above is
+// written with hamza/alif-maqsura/ta-marbuta forms for readability, but every
+// membership test happens against normalized tokens, so we must normalize the
+// set too (otherwise words like على/إلى/متى/معرفة are never filtered).
+TextLogic.STOP_WORDS_NORM = new Set(
+    [...TextLogic.STOP_WORDS].map((w) => TextLogic.normalizeArabic(w)).filter(Boolean)
+);

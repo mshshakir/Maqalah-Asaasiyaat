@@ -112,59 +112,53 @@ const Exporters = {
     },
 
     highlightHtml: function (text, missingWords, reasons, footnotes, counter) {
+        // Always HTML-escape the source text so stray < > & " in user input
+        // cannot corrupt or inject markup into the export.
+        if (!text) {
+            return { html: "", counter: counter };
+        }
         if (!missingWords || missingWords.length === 0) {
-            return { html: text, counter: counter };
+            return { html: TextLogic.escapeHtml(text), counter: counter };
         }
 
-        // Sort by length desc
-        const sortedWords = [...missingWords].sort((a, b) => b.length - a.length);
-
-        // Escape for regex
-        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        let html = text;
-
-        // We need to replace words carefully. 
-        // A simple replaceAll might replace parts of HTML tags if we are not careful, 
-        // but here 'text' is plain text from input usually (except if it has HTML from editor).
-        // The editor content is HTML.
-        // If text is HTML, we should be careful.
-        // In AppState, 'baab' and 'ahdaf' are stored as plain text in 'subQuestions' (from innerText in app.js).
-        // Wait, app.js: `baab: baabText` (innerText). So it is plain text. Good.
-
-        // We use a placeholder strategy similar to Python to avoid double replacement
-        const wordToToken = {};
-        const tokenToWord = {};
-
-        sortedWords.forEach((word, i) => {
-            const token = `__REF_${i}__`;
-            wordToToken[word] = token;
-            tokenToWord[token] = word;
-            // Replace all occurrences
-            const regex = new RegExp(escapeRegExp(word), 'g');
-            html = html.replace(regex, token);
+        // Map every missing word to its normalized stem-roots, so we highlight
+        // WHOLE words that share a root (matching the on-screen analysis) rather
+        // than blindly replacing substrings (which highlighted علم inside معلم).
+        const rootToWord = new Map();
+        missingWords.forEach((word) => {
+            const norm = TextLogic.normalizeArabic(word);
+            if (!norm) return;
+            for (const r of TextLogic.rootSet(norm)) {
+                if (!rootToWord.has(r)) rootToWord.set(r, word);
+            }
         });
 
-        const tokenNumberMap = {};
+        const escaped = TextLogic.escapeHtml(text);
+        const wordNumberMap = {}; // display word -> footnote number (dedupe per call)
 
-        html = html.replace(/__REF_\d+__/g, (token) => {
-            const word = tokenToWord[token];
-            if (!word) return token;
+        const html = escaped.replace(TextLogic.WORD_REGEX, (match) => {
+            const norm = TextLogic.normalizeArabic(match);
+            if (!norm || TextLogic.isStopWord(norm)) return match;
 
-            let num;
-            if (tokenNumberMap[token]) {
-                num = tokenNumberMap[token];
-            } else {
-                num = counter;
-                tokenNumberMap[token] = num;
-                counter++;
-                if (reasons[word]) {
-                    footnotes.push(`[${num}] <b>${word}</b>: ${reasons[word]}`);
-                }
+            let displayWord = null;
+            for (const r of TextLogic.rootSet(norm)) {
+                if (rootToWord.has(r)) { displayWord = rootToWord.get(r); break; }
             }
 
-            let replacement = `<span class='highlight' style='color: red; font-weight: bold;'>${word}</span>`;
-            if (reasons[word]) {
+            if (!displayWord) return match;
+
+            let replacement = `<span class='highlight' style='color: red; font-weight: bold;'>${match}</span>`;
+
+            if (reasons[displayWord]) {
+                let num;
+                if (wordNumberMap[displayWord]) {
+                    num = wordNumberMap[displayWord];
+                } else {
+                    num = counter;
+                    wordNumberMap[displayWord] = num;
+                    counter++;
+                    footnotes.push(`[${num}] <b>${TextLogic.escapeHtml(displayWord)}</b>: ${TextLogic.escapeHtml(reasons[displayWord])}`);
+                }
                 replacement += `<sup class='footnote-ref' style='color: red; font-weight: bold; font-size: 0.8em;'>[${num}]</sup>`;
             }
             return replacement;
@@ -180,8 +174,10 @@ const Exporters = {
         const footnotes = [];
         let footnoteCounter = 1;
 
-        // Process Main Question
-        const mainQRes = this.highlightHtml(appState.article.question, Object.keys(reasons), reasons, footnotes, footnoteCounter);
+        // Process Main Question — highlight only the MAIN question's own missing
+        // words, not every reason key (sub-question reasons live in the same dict).
+        const mainMissing = appState.article.missingQuestion || [];
+        const mainQRes = this.highlightHtml(appState.article.question, mainMissing, reasons, footnotes, footnoteCounter);
         const mainQuestionHtml = mainQRes.html;
         footnoteCounter = mainQRes.counter;
 
@@ -201,7 +197,7 @@ const Exporters = {
         let totalTableRows = 0;
 
         preparedData.forEach(item => {
-            const subQ = item.sub_q;
+            const subQ = TextLogic.escapeHtml(item.sub_q);
             const ahdafHtml = item.ahdaf_html;
             const baabHtml = item.baab_html;
             const totalRows = item.total_rows;
@@ -225,16 +221,16 @@ const Exporters = {
 
             // 4. Fasl
             if (firstRowData.fasl_span > 0) {
-                rowsHtml += `<td class='col-right' rowspan='${firstRowData.fasl_span}'>${firstRowData.fasl}</td>`;
+                rowsHtml += `<td class='col-right' rowspan='${firstRowData.fasl_span}'>${TextLogic.escapeHtml(firstRowData.fasl)}</td>`;
             }
 
             // 5. Mabhath
             if (firstRowData.mabhath_span > 0) {
-                rowsHtml += `<td class='col-right' rowspan='${firstRowData.mabhath_span}'>${firstRowData.mabhath}</td>`;
+                rowsHtml += `<td class='col-right' rowspan='${firstRowData.mabhath_span}'>${TextLogic.escapeHtml(firstRowData.mabhath)}</td>`;
             }
 
             // 6. Matlab (Leftmost)
-            rowsHtml += `<td class='col-right'>${firstRowData.matlab}</td>`;
+            rowsHtml += `<td class='col-right'>${TextLogic.escapeHtml(firstRowData.matlab)}</td>`;
 
             rowsHtml += "</tr>";
 
@@ -245,16 +241,16 @@ const Exporters = {
 
                 // Fasl
                 if (r.fasl_span > 0) {
-                    rowsHtml += `<td class='col-right' rowspan='${r.fasl_span}'>${r.fasl}</td>`;
+                    rowsHtml += `<td class='col-right' rowspan='${r.fasl_span}'>${TextLogic.escapeHtml(r.fasl)}</td>`;
                 }
 
                 // Mabhath
                 if (r.mabhath_span > 0) {
-                    rowsHtml += `<td class='col-right' rowspan='${r.mabhath_span}'>${r.mabhath}</td>`;
+                    rowsHtml += `<td class='col-right' rowspan='${r.mabhath_span}'>${TextLogic.escapeHtml(r.mabhath)}</td>`;
                 }
 
                 // Matlab
-                rowsHtml += `<td class='col-right'>${r.matlab}</td>`;
+                rowsHtml += `<td class='col-right'>${TextLogic.escapeHtml(r.matlab)}</td>`;
 
                 rowsHtml += "</tr>";
             }
@@ -300,7 +296,7 @@ const Exporters = {
                 </div>
                 
                 <div style="border: 2px solid #2c3e50; border-radius: 10px; padding: 20px; margin-bottom: 20px;">
-                    <h2 style="margin: 0 0 10px 0;">عنوان المقالة: ${appState.article.title}</h2>
+                    <h2 style="margin: 0 0 10px 0;">عنوان المقالة: ${TextLogic.escapeHtml(appState.article.title)}</h2>
                     <h3 style="margin: 0;">السؤال الأساسي: ${mainQuestionHtml}</h3>
                 </div>
 

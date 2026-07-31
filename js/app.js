@@ -6,7 +6,8 @@ const AppState = {
     article: {
         title: "",
         question: "",
-        reasons: {}
+        reasons: {},
+        missingQuestion: [] // words in the main question not aligned with the title
     },
     subQuestions: [], // Array of objects
     structure: []     // Array of objects matching subQuestions length
@@ -112,6 +113,7 @@ function loadProjectState(data) {
         try {
             const result = TextLogic.analyzeAndHighlight(AppState.article.question, AppState.article.title);
             els.question.innerHTML = result.highlightedHtml;
+            AppState.article.missingQuestion = result.missingWords;
             els.goToSubBtn.disabled = false;
         } catch (e) {
             console.error("Error analyzing main text:", e);
@@ -166,6 +168,7 @@ els.analyzeMainBtn.addEventListener('click', () => {
     // Update State
     AppState.article.title = title;
     AppState.article.question = question; // Store raw text or html? Let's store raw text for now, but maybe html is needed for export.
+    AppState.article.missingQuestion = result.missingWords;
     // Actually, let's store the raw text for logic, and we can re-generate HTML when needed.
 
     // Check for missing words and prompt for reasons
@@ -214,16 +217,16 @@ function addSubQuestionRow(data = null) {
         </div>
         <div class="row g-3">
             <div class="col-md-4">
-                <label class="form-label">نص الباب</label>
-                <div class="rich-text-editor border rounded p-2 baab-editor" contenteditable="true" style="min-height: 60px; background: #fff;">${baabHtml}</div>
+                <label class="form-label">السؤال الفرعي</label>
+                <textarea class="form-control sub-q-input" rows="2" placeholder="السؤال الفرعي...">${subQText}</textarea>
             </div>
             <div class="col-md-4">
                 <label class="form-label">الأهداف</label>
                 <div class="rich-text-editor border rounded p-2 ahdaf-editor" contenteditable="true" style="min-height: 60px; background: #fff;">${ahdafHtml}</div>
             </div>
             <div class="col-md-4">
-                <label class="form-label">السؤال الفرعي</label>
-                <textarea class="form-control sub-q-input" rows="2" placeholder="السؤال الفرعي...">${subQText}</textarea>
+                <label class="form-label">نص الباب</label>
+                <div class="rich-text-editor border rounded p-2 baab-editor" contenteditable="true" style="min-height: 60px; background: #fff;">${baabHtml}</div>
             </div>
         </div>
     `;
@@ -479,6 +482,20 @@ document.getElementById('backToSubBtn').addEventListener('click', () => {
 // --- Reasons Modal ---
 
 let currentReasonsCallback = null;
+let reasonsSaved = false;
+let lastReasons = {};
+
+// The callback fires exactly once, when the modal closes — whether the user
+// saved or dismissed (Cancel / × / backdrop). Dismissing passes empty reasons
+// so navigation is never permanently blocked.
+document.getElementById('reasonsModal').addEventListener('hidden.bs.modal', () => {
+    const cb = currentReasonsCallback;
+    const reasons = reasonsSaved ? lastReasons : {};
+    currentReasonsCallback = null;
+    reasonsSaved = false;
+    lastReasons = {};
+    if (cb) cb(reasons);
+});
 
 function showReasonsModal(words, callback, promptText = null, existingReasons = {}) {
     const form = els.reasonsForm;
@@ -504,6 +521,8 @@ function showReasonsModal(words, callback, promptText = null, existingReasons = 
     });
 
     currentReasonsCallback = callback;
+    reasonsSaved = false;
+    lastReasons = {};
     els.reasonsModal.show();
 }
 
@@ -516,10 +535,10 @@ els.saveReasonsBtn.addEventListener('click', () => {
         }
     });
 
+    // Record the result; the 'hidden.bs.modal' handler invokes the callback once.
+    lastReasons = reasons;
+    reasonsSaved = true;
     els.reasonsModal.hide();
-    if (currentReasonsCallback) {
-        currentReasonsCallback(reasons);
-    }
 });
 
 // --- Exports ---
